@@ -1,0 +1,80 @@
+From fa69f1b3fd1f962c490e268ac238e464f82eb64d Mon Sep 17 00:00:00 2001
+From: Holger Just <holger@plan.io>
+Date: Mon, 29 Aug 2022 20:28:37 +0200
+Subject: [PATCH] Ignore statuses if workflow only defines identity
+ transition
+
+---
+ app/controllers/workflows_controller.rb      |  2 ++
+ app/models/tracker.rb                        |  1 +
+ test/functional/workflows_controller_test.rb | 16 ++++++++++++++++
+ test/unit/tracker_test.rb                    |  1 +
+ 4 files changed, 20 insertions(+)
+
+diff --git a/app/controllers/workflows_controller.rb b/app/controllers/workflows_controller.rb
+index c0d5f865ea..3157ec6b36 100644
+--- a/app/controllers/workflows_controller.rb
++++ b/app/controllers/workflows_controller.rb
+@@ -161,6 +161,8 @@ def find_statuses
+       role_ids = Role.all.select(&:consider_workflow?).map(&:id)
+       status_ids = WorkflowTransition.where(
+         :tracker_id => @trackers.map(&:id), :role_id => role_ids
++      ).where(
++        'old_status_id <> new_status_id'
+       ).distinct.pluck(:old_status_id, :new_status_id).flatten.uniq
+       @statuses = IssueStatus.where(:id => status_ids).sorted.to_a.presence
+     end
+diff --git a/app/models/tracker.rb b/app/models/tracker.rb
+index c5665054cd..fcc61222ff 100644
+--- a/app/models/tracker.rb
++++ b/app/models/tracker.rb
+@@ -108,6 +108,7 @@ def issue_status_ids
+     else
+       @issue_status_ids ||=
+         WorkflowTransition.where(:tracker_id => id).
++          where('old_status_id <> new_status_id').
+           distinct.pluck(:old_status_id, :new_status_id).flatten.uniq
+     end
+   end
+diff --git a/test/functional/workflows_controller_test.rb b/test/functional/workflows_controller_test.rb
+index d086801ae8..05689090b7 100644
+--- a/test/functional/workflows_controller_test.rb
++++ b/test/functional/workflows_controller_test.rb
+@@ -83,6 +83,22 @@ def test_get_edit_with_role_and_tracker_should_not_include_statuses_from_roles_w
+     )
+   end
+ 
++  def test_get_edit_with_role_and_tracker_should_not_include_only_identity_workflows
++    WorkflowTransition.delete_all
++    WorkflowTransition.create!(:role_id => 1, :tracker_id => 1, :old_status_id => 1, :new_status_id => 1)
++    WorkflowTransition.create!(:role_id => 1, :tracker_id => 1, :old_status_id => 2, :new_status_id => 3)
++
++    get :edit, :params => {:role_id => 1, :tracker_id => 1}
++    assert_response :success
++
++    # statuses 1 and 5 not displayed
++    statuses = IssueStatus.where(:id => [2, 3]).sorted.pluck(:name)
++    assert_equal(
++      ["New issue"] + statuses,
++      css_select('table.workflows.transitions-always tbody tr td:first').map(&:text).map(&:strip)
++    )
++  end
++
+   def test_get_edit_should_include_allowed_statuses_for_new_issues
+     WorkflowTransition.delete_all
+     WorkflowTransition.create!(:role_id => 1, :tracker_id => 1, :old_status_id => 0, :new_status_id => 1)
+diff --git a/test/unit/tracker_test.rb b/test/unit/tracker_test.rb
+index f81aeb63b5..8eef06e587 100644
+--- a/test/unit/tracker_test.rb
++++ b/test/unit/tracker_test.rb
+@@ -89,6 +89,7 @@ def test_copy_workflows
+   def test_issue_statuses
+     tracker = Tracker.find(1)
+     WorkflowTransition.delete_all
++    WorkflowTransition.create!(:role_id => 1, :tracker_id => 1, :old_status_id => 1, :new_status_id => 1)
+     WorkflowTransition.create!(:role_id => 1, :tracker_id => 1, :old_status_id => 2, :new_status_id => 3)
+     WorkflowTransition.create!(:role_id => 2, :tracker_id => 1, :old_status_id => 3, :new_status_id => 5)
+ 
+-- 
+2.34.0
+
